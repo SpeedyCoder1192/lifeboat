@@ -1,0 +1,50 @@
+#!/bin/sh
+# What "lifeboat drivers" found, for reading later on another machine.
+# $1: modules loaded before the search, one per line
+export PATH=/usr/local/bin:/usr/bin
+
+echo "lifeboat driver report, $(date)"
+echo "kernel $(uname -r), lifeboat $(cat /etc/lifeboat-version 2>/dev/null)"
+grep -h -E '^(sys|hw)=' /run/lifeboat/state
+cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/product_version 2>/dev/null | paste -sd' '
+
+echo; echo "== loaded by the search"
+cut -d' ' -f1 /proc/modules | sort > /run/lifeboat/modules.after
+comm -13 "$1" /run/lifeboat/modules.after
+
+echo; echo "== devices without a driver"
+for d in /sys/bus/pci/devices/*; do
+    [ -e "$d/driver" ] || lspci -nns "${d##*/}"
+done
+for d in /sys/bus/usb/devices/*:*; do
+    [ -e "$d/driver" ] || echo "usb ${d##*/} class $(cat "$d/bInterfaceClass" 2>/dev/null) $(cat "$d/modalias" 2>/dev/null)"
+done
+
+echo; echo "== firmware that didn't load"
+dmesg | grep -iE 'firmware.*(fail|error|not found)|failed to load|direct firmware load' | tail -40
+
+echo; echo "== graphics"
+for c in /sys/class/drm/card[0-9]; do
+    [ -e "$c" ] || continue
+    drv=$(basename "$(readlink "$c/device/driver")" 2>/dev/null)
+    echo "${c##*/}: $drv"
+    for o in "$c"-*; do
+        [ -e "$o/status" ] && echo "  ${o##*/} $(cat "$o/status") $(sort -u "$o/modes" | paste -sd' ')"
+    done
+done
+lspci -k | grep -A3 -E 'VGA|3D|Display'
+
+echo; echo "== backlight"
+for b in /sys/class/backlight/*; do
+    [ -e "$b" ] && echo "${b##*/} $(cat "$b/brightness")/$(cat "$b/max_brightness") $(ls -l "$b/brightness" | cut -d' ' -f1,3,4)"
+done
+[ -e /sys/class/backlight ] && [ -z "$(ls /sys/class/backlight)" ] && echo "none"
+
+echo; echo "== sound"
+cat /proc/asound/cards
+ls -l /dev/snd 2>/dev/null
+lspci -k | grep -A3 -E 'Audio|Multimedia'
+dmesg | grep -iE 'sof|snd|hda|audio' | tail -40
+
+echo; echo "== kernel errors"
+dmesg --level=err,warn | tail -80

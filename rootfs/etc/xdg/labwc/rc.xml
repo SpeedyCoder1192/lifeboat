@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+    <gap>0</gap>
+  </core>
+  <placement>
+    <policy>center</policy>
+  </placement>
+  <theme>
+    <cornerRadius>0</cornerRadius>
+    <font name="DejaVu Sans Mono" size="10" />
+  </theme>
+  <keyboard>
+    <default />
+    <keybind key="W-space"><action name="Execute" command="lifeboat home" /></keybind>
+    <keybind key="W-Return"><action name="Execute" command="foot" /></keybind>
+    <keybind key="W-q"><action name="Close" /></keybind>
+    <keybind key="W-f"><action name="ToggleMaximize" /></keybind>
+    <keybind key="W-Tab"><action name="NextWindow" /></keybind>
+    <keybind key="XF86AudioRaiseVolume"><action name="Execute" command="lifeboat vol +" /></keybind>
+    <keybind key="XF86AudioLowerVolume"><action name="Execute" command="lifeboat vol -" /></keybind>
+    <keybind key="XF86AudioMute"><action name="Execute" command="lifeboat vol mute" /></keybind>
+    <keybind key="XF86MonBrightnessUp"><action name="Execute" command="lifeboat light +" /></keybind>
+    <keybind key="XF86MonBrightnessDown"><action name="Execute" command="lifeboat light -" /></keybind>
+    <keybind key="Print"><action name="Execute" command="sh -c 'grim ~/shot-$(date +%H%M%S).png'" /></keybind>
+  </keyboard>
+  <windowRules>
+    <windowRule identifier="lifeboat-home" serverDecoration="no">
+      <action name="Maximize" />
+    </windowRule>
+    <windowRule identifier="lifeboat-alert" serverDecoration="no" skipTaskbar="yes">
+      <action name="ToggleAlwaysOnTop" />
+    </windowRule>
+    <windowRule identifier="lifeboat-ask" serverDecoration="no" skipTaskbar="yes">
+      <action name="ToggleAlwaysOnTop" />
+    </windowRule>
+  </windowRules>
+</labwc_config>

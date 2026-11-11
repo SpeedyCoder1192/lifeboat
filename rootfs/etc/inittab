@@ -1,0 +1,6 @@
+::sysinit:/etc/rc.d/rcS
+tty1::respawn:/usr/bin/su - lifeboat -c /usr/local/bin/lifeboat-session
+tty2::respawn:/usr/bin/agetty --autologin root --noclear tty2 linux
+tty3::respawn:/usr/bin/agetty --noclear tty3 linux
+::ctrlaltdel:/usr/bin/busybox reboot
+::shutdown:/etc/rc.d/rcK

@@ -1,0 +1,8 @@
+/src/
+/work/
+/out/
+/git.sh
+boat/*.o
+boat/lifeboat
+boat/lifeboat-splash
+boat/toplevel-protocol.[ch]

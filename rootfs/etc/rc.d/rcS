@@ -1,0 +1,51 @@
+#!/bin/sh
+# early userspace, run once by busybox init
+export PATH=/usr/local/bin:/usr/bin
+exec >/var/log/boot.log 2>&1
+
+mkdir -p /dev/pts /dev/shm
+mount -t devpts -o gid=5,mode=620 devpts /dev/pts
+mount -t tmpfs -o mode=1777,nosuid,nodev shm /dev/shm
+mount -t tmpfs -o mode=1777,nosuid,nodev tmp /tmp
+mount -t cgroup2 none /sys/fs/cgroup
+mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+
+# the boot animation picks up where init left it; the session ends it
+if [ -e /run/lifeboat/splash ]; then
+    echo "text=finding the hardware" > /run/lifeboat/splash
+    chmod 666 /run/lifeboat/splash
+    lifeboat-splash boot resume &
+fi
+
+mkdir -p /run/udev /run/dbus /run/lock /run/user/1000
+chown lifeboat:lifeboat /run/user/1000
+chmod 700 /run/user/1000
+
+cat /etc/hostname > /proc/sys/kernel/hostname
+ip link set lo up
+sysctl -q --system
+
+/usr/lib/systemd/systemd-udevd --daemon
+udevadm trigger --action=add --type=subsystems
+udevadm trigger --action=add --type=devices
+udevadm settle --timeout=15
+modprobe -a fuse loop 2>/dev/null
+systemd-tmpfiles --create --boot --exclude-prefix=/dev 2>/dev/null
+rm -f /run/nologin
+
+[ -e /run/lifeboat/splash ] && echo "text=starting up" > /run/lifeboat/splash
+dbus-daemon --system --fork
+seatd -g seat &
+/usr/lib/iwd/iwd &
+# openresolv only writes a resolv.conf it made itself
+rm -f /etc/resolv.conf
+dhcpcd -q -b -j /var/log/dhcpcd.log
+/usr/lib/bluetooth/bluetoothd &
+acpid
+chronyd
+lifeboat --bg daemon
+
+# a root shell on the serial port, when the kernel was told to use it (qemu)
+if grep -q 'console=ttyS0' /proc/cmdline; then
+    (while :; do agetty --autologin root -L ttyS0 115200 vt100; sleep 1; done) &
+fi

@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<openbox_menu>
+  <menu id="root-menu" label="">
+    <item label="home"><action name="Execute" command="lifeboat home" /></item>
+    <item label="terminal"><action name="Execute" command="foot" /></item>
+    <item label="power off or restart"><action name="Execute" command="foot --app-id lifeboat-ask --window-size-chars 52x20 lifeboat ask" /></item>
+  </menu>
+</openbox_menu>

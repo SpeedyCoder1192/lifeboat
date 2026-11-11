@@ -1,0 +1,19 @@
+#!/bin/sh
+# Only reached by a bare poweroff or reboot, which keeps whatever is already
+# on the stick and saves nothing new. "lifeboat off" is the one that asks.
+export PATH=/usr/local/bin:/usr/bin
+touch /run/lifeboat/leaving
+pkill -TERM -u lifeboat
+if ! pgrep -x lifeboat-splash >/dev/null; then
+    echo "text=powering off" > /run/lifeboat/splash
+    chvt 1 2>/dev/null
+    lifeboat-splash down &
+fi
+sleep 1
+/usr/local/lib/lifeboat/release-stick
+# the boat sails off, then the machine goes
+echo "end=1" > /run/lifeboat/splash
+for _ in $(seq 50); do
+    pgrep -x lifeboat-splash >/dev/null || break
+    sleep 0.1
+done

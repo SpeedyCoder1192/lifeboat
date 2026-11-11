@@ -1,0 +1,342 @@
+#!/bin/busybox sh
+# lifeboat init. Runs from the initramfs, puts the root together and hands
+# over to busybox init:
+#
+#   lower   system.sfs (on the device lifeboat-system) and hw.sfs (firmware
+#           and modules), each copied into ram or read off the stick depending
+#           on how much ram there is
+#   upper   xfs on /dev/mapper/lifeboat-changes
+#             -> zram                          fresh session, changes in ram
+#             -> loop over changes.img         a saved session on the stick, on a
+#                                              LIFEBOAT partition or inside
+#                                              lifeboat/save.img on a fat stick
+#
+# kernel options: lifeboat.fresh  ignore what is saved on the stick
+#                 lifeboat.shell  drop to a shell here instead of booting
+
+export PATH=/usr/bin
+export DM_DISABLE_UDEV=1
+
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+mount -t tmpfs -o mode=0755,nosuid,nodev run /run
+mkdir -p /run/lifeboat/system /run/lifeboat/changes /run/lifeboat/usb /newroot
+
+say() { echo "lifeboat: $*" > /dev/kmsg; }
+splash_pid=
+# the animation on tty1 (lifeboat-splash), told what's going on through a file
+show() {
+    [ -n "$splash_pid" ] || return 0
+    { echo "text=$1"; [ -n "$2" ] && echo "$2"; } > /run/lifeboat/splash.new
+    mv /run/lifeboat/splash.new /run/lifeboat/splash
+}
+splash_stop() {
+    [ -n "$splash_pid" ] || return 0
+    echo "quit=1" > /run/lifeboat/splash
+    wait "$splash_pid" 2>/dev/null
+    splash_pid=
+}
+# the passphrase of an encrypted save: typed into the animation, or on the
+# console without it. "skip" means boot without the save
+getpass() {
+    rm -f /run/lifeboat/pass
+    if [ -n "$splash_pid" ]; then
+        { echo "text=$1"; echo "ask=1"; [ -n "$2" ] && echo "wrong=1"; } > /run/lifeboat/splash.new
+        mv /run/lifeboat/splash.new /run/lifeboat/splash
+        while [ ! -e /run/lifeboat/pass ]; do sleep 0.1; done
+        cat /run/lifeboat/pass
+        rm -f /run/lifeboat/pass
+        show "unlocking" "pct=-1"
+    else
+        [ -n "$2" ] && echo "that's not it" > /dev/console
+        printf '%s. passphrase (empty skips): ' "$1" > /dev/console
+        stty -echo < /dev/console
+        read -r p < /dev/console
+        stty echo < /dev/console
+        echo > /dev/console
+        [ -n "$p" ] && echo "$p" || echo skip
+    fi
+}
+unlock() {
+    tries=0
+    mkdir -p /run/cryptsetup
+    while [ $tries -lt 3 ]; do
+        p=$(getpass "this session is locked" $([ $tries -gt 0 ] && echo wrong))
+        [ "$p" = skip ] && break
+        printf '%s' "$p" > /run/lifeboat/key
+        chmod 600 /run/lifeboat/key
+        cryptsetup open --key-file /run/lifeboat/key "$1" lifeboat-save 2>/dev/null && return 0
+        tries=$((tries + 1))
+    done
+    rm -f /run/lifeboat/key
+    say "the saved session stays locked, starting fresh"
+    return 1
+}
+
+shell() {
+    splash_stop
+    echo "lifeboat: $*. exit to carry on"
+    setsid cttyhack sh
+}
+
+fresh=0
+splash=1
+for word in $(cat /proc/cmdline); do
+    case $word in
+        lifeboat.fresh) fresh=1 ;;
+        lifeboat.shell) shell "you asked for a shell" ;;
+        lifeboat.nosplash) splash=0 ;;
+    esac
+done
+if [ $splash = 1 ] && [ -e /dev/tty1 ]; then
+    echo "text=waking up" > /run/lifeboat/splash
+    lifeboat-splash boot &
+    splash_pid=$!
+fi
+
+# an Arch kernel has most of this as modules, the lifeboat one has it built in
+if [ -d "/lib/modules/$(uname -r)" ]; then
+    for m in $(cat /etc/modules); do
+        modprobe -q "$m" 2>/dev/null
+    done
+fi
+
+. /etc/lifeboat.conf
+label=${USB_LABEL:-LIFEBOAT}
+where=ram
+boot=
+savefile=
+mkdir -p /run/lifeboat/boot /run/lifeboat/image
+
+# Where lifeboat itself is: a partition labelled LBBOOT, which is what a
+# flashed iso or a lifeboat stick has. A stick made by copying the files on
+# (rufus in iso mode, or by hand) may have any label, so after a few seconds
+# every fat, iso9660 and exfat partition is checked for lifeboat/system.sfs.
+# qemu test boots hand the system over as /system.sfs and skip all this.
+scan_boot() {
+    for d in $(blkid | grep -E 'TYPE="(vfat|iso9660|exfat)"' | cut -d: -f1); do
+        mount -o ro "$d" /run/lifeboat/boot 2>/dev/null || continue
+        if [ -e /run/lifeboat/boot/lifeboat/system.sfs ]; then
+            umount /run/lifeboat/boot
+            echo "$d"
+            return 0
+        fi
+        umount /run/lifeboat/boot
+    done
+    return 1
+}
+
+if [ ! -e /system.sfs ]; then
+    show "looking for the stick" "pct=-1"
+    i=0
+    while [ $i -lt 60 ]; do
+        boot=$(findfs LABEL=LBBOOT 2>/dev/null) && break
+        if [ $i -ge 15 ] && [ $((i % 5)) = 0 ]; then
+            boot=$(scan_boot) && break
+        fi
+        boot=
+        sleep 0.2
+        i=$((i + 1))
+    done
+    [ -n "$boot" ] || shell "can't find where lifeboat is (no LBBOOT partition and no lifeboat/system.sfs)"
+    # fat stays writable, so a save file can live on it
+    # (busybox blkid has no -o/-s, so match its one line of output)
+    if blkid "$boot" | grep -q 'TYPE="vfat"'; then
+        mount -t vfat -o rw,noatime "$boot" /run/lifeboat/boot || shell "can't mount $boot"
+        [ -e /run/lifeboat/boot/lifeboat/save.img ] && savefile=/run/lifeboat/boot/lifeboat/save.img
+    else
+        mount -o ro "$boot" /run/lifeboat/boot || shell "can't mount $boot"
+    fi
+    echo "$boot" > /run/lifeboat/bootdev
+fi
+
+# Where saved sessions are: a partition labelled LIFEBOAT, or failing that a
+# save file next to the system on a fat stick (lifeboat/save.img, ext4 inside).
+dev=
+i=0
+while [ $i -lt 40 ]; do
+    dev=$(findfs "LABEL=$label" 2>/dev/null) && break
+    dev=
+    # the stick that booted us is up already, so a save partition on it is too
+    [ -n "$boot" ] && [ $i -ge 5 ] && break
+    [ $i -ge 10 ] && ! ls /sys/bus/usb/devices/*/host* >/dev/null 2>&1 && break
+    sleep 0.2
+    i=$((i + 1))
+done
+saveloop=
+if [ -z "$dev" ] && [ -n "$savefile" ]; then
+    saveloop=$(losetup -f)
+    if losetup "$saveloop" "$savefile"; then
+        dev=$saveloop
+    else
+        saveloop=
+    fi
+fi
+[ -n "$savefile" ] && echo "$boot" > /run/lifeboat/savefile
+
+if [ -n "$dev" ] && mount -t ext4 -o noatime "$dev" /run/lifeboat/usb; then
+    img=/run/lifeboat/usb/changes.img
+    # a save that got cut off half way leaves only the old one behind
+    [ ! -e $img ] && [ -e $img.prev ] && mv $img.prev $img
+    if [ $fresh = 0 ] && [ -e $img ]; then
+        loop=$(losetup -f)
+        losetup "$loop" $img
+        savedev=$loop
+        if cryptsetup isLuks "$loop" 2>/dev/null; then
+            if unlock "$loop"; then
+                savedev=/dev/mapper/lifeboat-save
+            else
+                savedev=
+            fi
+        fi
+        if [ -n "$savedev" ] &&
+           dmsetup create lifeboat-changes --table "0 $(blockdev --getsz "$savedev") linear $savedev 0" &&
+           mount -t xfs -o noatime /dev/mapper/lifeboat-changes /run/lifeboat/changes; then
+            where=stick
+            say "using the changes saved on $dev"
+        elif [ -z "$savedev" ]; then
+            losetup -d "$loop"
+        else
+            say "the saved changes will not mount, starting fresh (kept as changes.img.bad)"
+            dmsetup remove lifeboat-changes 2>/dev/null
+            cryptsetup close lifeboat-save 2>/dev/null
+            losetup -d "$loop" 2>/dev/null
+            mv $img $img.bad
+        fi
+    fi
+    # an update for a stick flashed from the iso lands here (lifeboat update)
+    if [ -e /run/lifeboat/usb/lifeboat/system.sfs ] && [ -e /run/lifeboat/usb/lifeboat/hw.sfs ]; then
+        upd=/run/lifeboat/usb/lifeboat
+    elif [ $where = ram ]; then
+        umount /run/lifeboat/usb
+        [ -n "$saveloop" ] && losetup -d "$saveloop"
+    fi
+fi
+
+show "making room for your changes" "pct=-1"
+if [ $where = ram ]; then
+    size=${RAM_SIZE:-16G}
+    case $size in
+        *%) kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+            bytes=$((kb * 1024 / 100 * ${size%\%})) ;;
+        *T) bytes=$((${size%T} * 1024 * 1024 * 1024 * 1024)) ;;
+        *G) bytes=$((${size%G} * 1024 * 1024 * 1024)) ;;
+        *M) bytes=$((${size%M} * 1024 * 1024)) ;;
+        *)  bytes=$size ;;
+    esac
+    bytes=$((bytes / 4096 * 4096))
+    echo "${ZRAM_COMP:-lz4}" > /sys/block/zram0/comp_algorithm
+    echo "$bytes" > /sys/block/zram0/disksize
+    dmsetup create lifeboat-changes --table "0 $((bytes / 512)) linear /dev/zram0 0" ||
+        shell "could not make the changes device"
+    mkfs.xfs -q -K -L changes -m reflink=0,rmapbt=0 /dev/mapper/lifeboat-changes ||
+        shell "mkfs.xfs failed"
+    mount -t xfs -o noatime /dev/mapper/lifeboat-changes /run/lifeboat/changes ||
+        shell "could not mount the changes"
+fi
+
+# What goes into ram. The image comes in two parts: system.sfs, which every
+# boot reads all over, and hw.sfs, the firmware and kernel modules for every
+# machine there is, of which this one uses a few dozen megabytes.
+#   plenty of ram   both copied in, the stick can come out right away
+#   enough          system copied in, hw read off the stick until the watcher
+#                   has copied this machine's drivers into ram (a minute)
+#   too little      both read off the stick, which then has to stay in
+# SYSTEM_IN_RAM in lifeboat.conf: auto, always or never.
+# The system sits on a device-mapper device so the watcher can move it between
+# ram and the stick later without anything noticing (see ram.c).
+sfs=/system.sfs
+hw=/hw.sfs
+mkdir -p /run/lifeboat/hw
+if [ -e $sfs ]; then
+    ram_sys=1
+    ram_hw=1
+else
+    sfs=/run/lifeboat/boot/lifeboat/system.sfs
+    hw=/run/lifeboat/boot/lifeboat/hw.sfs
+    if [ -n "$upd" ]; then
+        sfs=$upd/system.sfs
+        hw=$upd/hw.sfs
+    fi
+    [ -e $sfs ] || shell "no lifeboat/system.sfs on $boot"
+    [ -e $hw ] || shell "no lifeboat/hw.sfs on $boot"
+    core=$(($(stat -c %s $sfs) / 1024))
+    drv=$(($(stat -c %s $hw) / 1024))
+    have=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+    ram_sys=0
+    ram_hw=0
+    case ${SYSTEM_IN_RAM:-auto} in
+        never) ;;
+        always)
+            [ $have -gt $((core + 524288)) ] && ram_sys=1
+            [ $have -gt $((core + drv + 1048576)) ] && ram_hw=1 ;;
+        *)
+            [ $have -gt $((core * 2)) ] && ram_sys=1
+            [ $have -gt $(((core + drv) * 5 / 2)) ] && ram_hw=1 ;;
+    esac
+    want=0
+    [ $ram_sys = 1 ] && want=$((want + core))
+    [ $ram_hw = 1 ] && want=$((want + drv))
+    if [ $want -gt 0 ]; then
+        say "loading $((want / 1024))M into ram"
+        mount -t tmpfs -o size=$((want + 16384))k,mode=0755 image /run/lifeboat/image
+        if [ $ram_sys = 1 ]; then
+            show "loading the system into ram" "watch=$sfs|/run/lifeboat/image/system.sfs"
+            cp $sfs /run/lifeboat/image/system.sfs || shell "copying the system into ram failed"
+            sfs=/run/lifeboat/image/system.sfs
+        fi
+        if [ $ram_hw = 1 ]; then
+            show "loading the drivers into ram" "watch=$hw|/run/lifeboat/image/hw.sfs"
+            cp $hw /run/lifeboat/image/hw.sfs || shell "copying the drivers into ram failed"
+            hw=/run/lifeboat/image/hw.sfs
+        fi
+    fi
+    [ $ram_sys = 0 ] && say "not enough ram for the system image, reading it off the stick"
+fi
+
+show "putting it together" "pct=-1"
+# the system image, through lifeboat-system. a ram copy is writable so it can
+# later be the target of a copy back in; the stick's file is opened read only
+if [ $ram_sys = 1 ]; then
+    sysloop=$(losetup -f) && losetup "$sysloop" $sfs
+else
+    sysloop=$(losetup -f) && losetup -r "$sysloop" $sfs
+fi || shell "can't attach the system image"
+dmsetup create lifeboat-system --table "0 $(blockdev --getsz "$sysloop") linear $sysloop 0" ||
+    shell "can't map the system image"
+hwloop=$(losetup -f) && losetup -r "$hwloop" $hw || shell "can't attach the drivers"
+mount -t squashfs -o ro "$hwloop" /run/lifeboat/hw || shell "can't mount the drivers"
+
+if [ -n "$upd" ] && [ $where = ram ] && [ $ram_sys = 1 ] && [ $ram_hw = 1 ]; then
+    umount /run/lifeboat/usb
+fi
+
+# done with the stick, unless something still lives on it
+if [ -n "$boot" ] && [ $ram_sys = 1 ] && [ $ram_hw = 1 ] && ! { [ -n "$saveloop" ] && [ $where = stick ]; }; then
+    umount /run/lifeboat/boot
+fi
+
+mkdir -p /run/lifeboat/changes/upper /run/lifeboat/changes/work
+mount -t squashfs -o ro /dev/mapper/lifeboat-system /run/lifeboat/system ||
+    shell "could not mount the system image"
+mount -t overlay -o lowerdir=/run/lifeboat/system,upperdir=/run/lifeboat/changes/upper,workdir=/run/lifeboat/changes/work \
+    overlay /newroot || shell "could not mount the overlay"
+mkdir -p /newroot/usr/lib/firmware /newroot/usr/lib/modules
+mount --bind /run/lifeboat/hw/firmware /newroot/usr/lib/firmware
+mount --bind /run/lifeboat/hw/modules /newroot/usr/lib/modules
+
+# the firmware loader names every file it loads, which tells the watcher
+# which firmware this machine needs
+echo 'file drivers/base/firmware_loader/main.c +p' > /proc/dynamic_debug/control 2>/dev/null
+
+# files dropped in /patch by tools/run-qemu.sh, to try things without a rebuild
+[ -d /patch ] && cp -a /patch/. /newroot/
+
+echo "where=$where" > /run/lifeboat/state
+# rcS starts the animation again from the real system, right where this one stops
+splash_stop
+for m in proc sys dev run; do
+    mount --move /$m /newroot/$m
+done
+exec switch_root /newroot /usr/bin/init

@@ -1,0 +1,8 @@
+dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR XDG_SESSION_TYPE
+pipewire &
+wireplumber &
+pipewire-pulse &
+swaybg -c '#0c0c0b' &
+# screen size, scale and the screen-off timer, from the settings page
+lifeboat apply
+lifeboat home &

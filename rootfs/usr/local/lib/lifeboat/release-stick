@@ -1,0 +1,24 @@
+#!/bin/sh
+# Last thing before power off: flush the changes onto the stick and unmount it,
+# so it comes back clean (no journal replay, no FAT dirty bit for Windows).
+# Once the changes are frozen nothing writes to them again, so the devices
+# under them can be swapped for a zero target and taken apart.
+export PATH=/usr/local/bin:/usr/bin
+sync
+if grep -q '^where=stick' /run/lifeboat/state 2>/dev/null; then
+    fsfreeze -f /run/lifeboat/changes
+    sync -f /run/lifeboat/usb
+    size=$(blockdev --getsz /dev/mapper/lifeboat-changes)
+    echo "0 $size zero" | dmsetup reload lifeboat-changes &&
+        dmsetup suspend --nolockfs lifeboat-changes &&
+        dmsetup resume lifeboat-changes
+    for d in lifeboat-move lifeboat-save; do
+        dmsetup remove $d 2>/dev/null
+    done
+fi
+for l in $(losetup -nO NAME,BACK-FILE | awk '$2 ~ /^\/run\/lifeboat\/(usb|boot)\// {print $1}'); do
+    losetup -d "$l" 2>/dev/null
+done
+umount /run/lifeboat/usb 2>/dev/null
+umount /run/lifeboat/boot 2>/dev/null
+sync
