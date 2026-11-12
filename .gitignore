@@ -2,6 +2,7 @@
 /work/
 /out/
 /git.sh
+/OPENCODE.md
 boat/*.o
 boat/lifeboat
 boat/lifeboat-splash
