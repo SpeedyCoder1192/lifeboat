@@ -9,6 +9,8 @@
 #   ./build.sh qemu [...]      boot it in qemu (see tools/run-qemu.sh)
 #   ./build.sh usb /dev/sdX [wipe]   write a boot stick (asks for root)
 #   ./build.sh usb work/usb.img      the same into an image file, for "qemu usb"
+#   ./build.sh patch OLD.iso   out/patches/lifeboat-<oldver>.patch, for update
+#   ./build.sh update /dev/sdX [patch]  apply a patch to a stick (asks for root)
 #   ./build.sh kernel          optional: compile our own 7.2 kernel instead of
 #                              using the Arch kernel installed on this machine
 #
@@ -74,6 +76,36 @@ usb() {
     pkexec "$top/tools/write-usb.sh" "$top" "$@"
 }
 
+patch() {
+    [ $# -ge 1 ] || { echo "usage: $0 patch OLD.iso [new-version]" >&2; exit 1; }
+    "$top/tools/mkpatch.sh" "$top" "$@"
+}
+
+update() {
+    [ $# -ge 1 ] || { echo "usage: $0 update /dev/sdX [patch]" >&2; exit 1; }
+    dev=$1
+    patch=${2:-}
+    if [ -b "$dev" ]; then
+        lsblk -o NAME,SIZE,MODEL,TRAN,LABEL "$dev"
+        read -r -p "update lifeboat on $dev? type yes: " answer
+        [ "$answer" = yes ] || exit 1
+    else
+        [ -f "$dev" ] || { echo "$dev is not a disk or image file" >&2; exit 1; }
+        dev=$(realpath "$dev")
+    fi
+    if [ -n "$patch" ]; then
+        # pkexec does not keep our working directory, so resolve the patch
+        # here while the relative path still means what the user typed
+        [ -f "$patch" ] || { echo "$patch not found" >&2; exit 1; }
+        patch=$(realpath "$patch")
+    fi
+    if [ -n "$patch" ]; then
+        pkexec "$top/tools/update-usb.sh" "$top" "$dev" "$patch"
+    else
+        pkexec "$top/tools/update-usb.sh" "$top" "$dev"
+    fi
+}
+
 case ${1:-all} in
     tool)   tool ;;
     kernel) kernel ;;
@@ -82,6 +114,8 @@ case ${1:-all} in
     iso)    shift; "$top/tools/mkiso.sh" "$@" ;;
     qemu)   shift; exec "$top/tools/run-qemu.sh" "$@" ;;
     usb)    shift; usb "$@" ;;
+    patch)  shift; patch "$@" ;;
+    update) shift; update "$@" ;;
     all)    tool; rootfs; image ;;
-    *)      sed -n '2,15p' "$0"; exit 1 ;;
+    *)      sed -n '2,17p' "$0"; exit 1 ;;
 esac

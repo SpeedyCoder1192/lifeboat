@@ -498,22 +498,134 @@ int cmd_wipe(const char *dev, const char *how)
 /* --- updating lifeboat ------------------------------------------------------------------ */
 
 /* where "update gitlab" gets the newest build from. GitLab's permalink always
-   points at the latest release, so the url itself never goes stale. */
+   points at the latest release, so the url itself never goes stale. A patch is
+   named after the version it starts from, so an older stick can ask for the
+   exact delta it needs. */
 #define UPDATE_GITLAB "https://gitlab.com/aahiluzzama27/lifeboat/-/releases/permalink/latest/downloads/lifeboat.iso"
+#define UPDATE_GITLAB_PATCH \
+    "https://gitlab.com/aahiluzzama27/lifeboat/-/releases/permalink/latest/downloads/lifeboat-%s.patch"
+
+static int is_patch(const char *s)
+{
+    size_t n = strlen(s);
+    return n > 6 && !strcmp(s + n - 6, ".patch");
+}
+
+/* mount where the new files go. true when they all sit on the boot partition;
+   false is a flashed iso, whose kernel lives on its own efi partition. */
+static int update_target(const char *bootdev, int boot_rw, char *target, size_t n)
+{
+    struct stat a, b;
+    char save[128];
+
+    if (boot_rw) {
+        snprintf(target, n, RUN_DIR "/boot");
+        mkdir(target, 0755);
+        if (stat(target, &a) || stat(RUN_DIR, &b) || a.st_dev == b.st_dev) {
+            if (sh("mount -o rw '%s' '%s'", bootdev, target))
+                return 1;
+        } else if (sh("mount -o remount,rw '%s'", target)) {
+            return 1;
+        }
+        return 0;
+    }
+    if (!stick_dev(save, sizeof save)) {
+        fprintf(stderr, "this stick was flashed from the iso and has nowhere to put the update.\n"
+                        "make it a save stick first (d, then 9, on it), or flash the new iso.\n");
+        return 1;
+    }
+    snprintf(target, n, RUN_DIR "/usb");
+    if (sh("mountpoint -q '%s' || mount -o rw '%s' '%s'; mount -o remount,rw '%s'", target, save, target, target))
+        return 1;
+    return 0;
+}
+
+/* the from and to versions in a patch manifest */
+static int patch_versions(const char *bundle, char *from, size_t fn, char *to, size_t tn)
+{
+    char manifest[400], line[300], val[128];
+    FILE *f;
+
+    from[0] = to[0] = 0;
+    snprintf(manifest, sizeof manifest, "%s/manifest", bundle);
+    if (!(f = fopen(manifest, "r")))
+        return 1;
+    while (fgets(line, sizeof line, f)) {
+        if (sscanf(line, "from %127s", val) == 1)
+            snprintf(from, fn, "%s", val);
+        else if (sscanf(line, "to %127s", val) == 1)
+            snprintf(to, tn, "%s", val);
+    }
+    fclose(f);
+    return !from[0] || !to[0];
+}
+
+/* apply the files in a patch bundle. each one is written beside the old file,
+   checked, then swapped in, so a file that comes out wrong is never installed.
+   a failure part way can still leave a mix of old and new files, so the caller
+   must not treat a partial run as bootable. */
+static int apply_patch(const char *bundle, const char *target)
+{
+    char manifest[400], line[400], name[128], kind[16], want[80], size[32];
+    FILE *f;
+    int rc = 0;
+
+    snprintf(manifest, sizeof manifest, "%s/manifest", bundle);
+    if (!(f = fopen(manifest, "r"))) {
+        perror(manifest);
+        return 1;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char old[400], new[420], src[400];
+        int got;
+        if ((got = sscanf(line, "file %127s %15s %79s %31s", name, kind, want, size)) < 3)
+            continue;
+        snprintf(old, sizeof old, "%s/lifeboat/%s", target, name);
+        snprintf(new, sizeof new, "%s.new", old);
+        say("%s", name);
+        if (!strcmp(kind, "patch")) {
+            snprintf(src, sizeof src, "%s/%s.patch", bundle, name);
+            if (sh("zstd -q -d --long=31 --patch-from='%s' '%s' -o '%s'", old, src, new)) {
+                fprintf(stderr, "couldn't apply the %s patch\n", name);
+                rc = 1;
+                break;
+            }
+        } else {
+            snprintf(src, sizeof src, "%s/%s", bundle, name);
+            if (sh("cp '%s' '%s'", src, new)) {
+                rc = 1;
+                break;
+            }
+        }
+        if (sh("echo '%s  %s' | sha256sum -c - >/dev/null", want, new)) {
+            fprintf(stderr, "%s didn't come out right\n", name);
+            unlink(new);
+            rc = 1;
+            break;
+        }
+        if (rename(new, old)) {
+            perror(old);
+            rc = 1;
+            break;
+        }
+    }
+    fclose(f);
+    return rc;
+}
 
 /* lifeboat update FILE-OR-LINK: the files out of a newer lifeboat iso, onto the stick */
 int cmd_update(const char *src)
 {
     char bootdev[128] = "", fs[32], dir[] = RUN_DIR "/update", iso[300], target[200], ver_new[64] = "",
-         ver_old[64] = "", path[400], save[128], srcurl[400];
+         ver_old[64] = "", path[400], save[128], srcurl[400], patchurl[400], patchfile[400],
+         patchdir[] = RUN_DIR "/update/patch", from[64] = "", to[64] = "";
     static const char *files[] = {"vmlinuz", "initramfs.img", "system.sfs", "hw.sfs"};
     FILE *f;
-    struct stat a, b;
-    int boot_rw;
+    int boot_rw, want_gitlab = !strcmp(src, "gitlab"), explicit_patch = is_patch(src), try_patch;
 
     if (root_only())
         return 1;
-    if (!strcmp(src, "gitlab")) {
+    if (want_gitlab) {
         snprintf(srcurl, sizeof srcurl, "%s", UPDATE_GITLAB);
         src = srcurl;
     }
@@ -528,8 +640,77 @@ int cmd_update(const char *src)
     }
     lsblk1(bootdev, "FSTYPE", fs, sizeof fs);
     boot_rw = !strcmp(fs, "vfat");
+    if (explicit_patch && !boot_rw) {
+        fprintf(stderr, "patches need a normal lifeboat stick; use the iso for a flashed one\n");
+        return 1;
+    }
+    if ((f = fopen("/etc/lifeboat-version", "r"))) {
+        if (!fgets(ver_old, sizeof ver_old, f))
+            ver_old[0] = 0;
+        fclose(f);
+    }
+    ver_old[strcspn(ver_old, "\n")] = 0;
 
     mkdir(dir, 0755);
+
+    /* try the small delta first, but only on the normal stick layout where all
+       four files sit together. a flashed iso falls through to the whole iso. */
+    try_patch = (want_gitlab || explicit_patch) && boot_rw;
+    if (try_patch) {
+        char room[160] = RUN_DIR "/update";
+        if (stick_dev(save, sizeof save) && !run(NULL, 0, "mount", "-o", "remount,rw", RUN_DIR "/usb"))
+            snprintf(room, sizeof room, RUN_DIR "/usb");
+        if (want_gitlab) {
+            snprintf(patchurl, sizeof patchurl, UPDATE_GITLAB_PATCH, ver_old);
+            snprintf(patchfile, sizeof patchfile, "%s/lifeboat.patch", room);
+            say("looking for a patch from %s", ver_old[0] ? ver_old : "this build");
+            if (sh("curl -fsSL --progress-bar -o '%s' '%s'", patchfile, patchurl)) {
+                printf("no patch from this version. downloading the whole iso instead\n");
+                try_patch = 0;
+            }
+        } else if (!strncmp(src, "http://", 7) || !strncmp(src, "https://", 8)) {
+            snprintf(patchfile, sizeof patchfile, "%s/lifeboat.patch", room);
+            say("downloading %s", src);
+            if (sh("curl -fL --progress-bar -o '%s' '%s'", patchfile, src))
+                return 1;
+        } else {
+            snprintf(patchfile, sizeof patchfile, "%s", src);
+        }
+        if (try_patch) {
+            sh("rm -rf '%s'", patchdir);
+            mkdir(patchdir, 0755);
+            if (sh("zstd -q -dc '%s' | tar -xf - -C '%s'", patchfile, patchdir)) {
+                fprintf(stderr, "that patch bundle is damaged\n");
+                return 1;
+            }
+            if (patch_versions(patchdir, from, sizeof from, to, sizeof to)) {
+                fprintf(stderr, "that patch has no from/to version\n");
+                return 1;
+            }
+            if (strcmp(from, ver_old)) {
+                fprintf(stderr, "the patch is from %s, but this is %s\n", from, ver_old);
+                if (want_gitlab)
+                    try_patch = 0;
+                else
+                    return 1;
+            }
+        }
+        if (try_patch) {
+            if (update_target(bootdev, boot_rw, target, sizeof target))
+                return 1;
+            if (apply_patch(patchdir, target)) {
+                fprintf(stderr, "the patch stopped. the old files are still there\n");
+                return 1;
+            }
+            sh("cp '%s/version' '%s/lifeboat/version'", patchdir, target);
+            sync();
+            say("\nupdated to %s (patch). it starts with the next boot. saved sessions carry over;\n"
+                "packages you added sit on top of the new system.", to);
+            return 0;
+        }
+    }
+
+    /* no patch, or a flashed stick: use the whole iso */
     if (!strncmp(src, "http://", 7) || !strncmp(src, "https://", 8)) {
         /* downloads land on the stick's save partition, or in ram */
         char room[160] = RUN_DIR "/update";
@@ -551,13 +732,7 @@ int cmd_update(const char *src)
             ver_new[0] = 0;
         fclose(f);
     }
-    if ((f = fopen("/etc/lifeboat-version", "r"))) {
-        if (!fgets(ver_old, sizeof ver_old, f))
-            ver_old[0] = 0;
-        fclose(f);
-    }
     ver_new[strcspn(ver_new, "\n")] = 0;
-    ver_old[strcspn(ver_old, "\n")] = 0;
     if (!ver_new[0]) {
         fprintf(stderr, "that isn't a lifeboat iso (no lifeboat/version in it)\n");
         return 1;
@@ -569,26 +744,8 @@ int cmd_update(const char *src)
     /* where the new files go: the boot partition when it's fat, otherwise the
        kernel onto the efi partition and the images onto the save partition,
        which init looks at first */
-    if (boot_rw) {
-        snprintf(target, sizeof target, RUN_DIR "/boot");
-        mkdir(target, 0755);
-        if (stat(target, &a) || stat(RUN_DIR, &b) || a.st_dev == b.st_dev) {
-            if (sh("mount -o rw '%s' '%s'", bootdev, target))
-                return 1;
-        } else if (sh("mount -o remount,rw '%s'", target)) {
-            return 1;
-        }
-    } else {
-        if (!stick_dev(save, sizeof save)) {
-            fprintf(stderr, "this stick was flashed from the iso and has nowhere to put the update.\n"
-                            "make it a save stick first (d, then 9, on it), or flash the new iso.\n");
-            return 1;
-        }
-        snprintf(target, sizeof target, RUN_DIR "/usb");
-        if (sh("mountpoint -q '%s' || mount -o rw '%s' '%s'; mount -o remount,rw '%s'", target, save, target,
-               target))
-            return 1;
-    }
+    if (update_target(bootdev, boot_rw, target, sizeof target))
+        return 1;
     sh("mkdir -p '%s/lifeboat'", target);
 
     for (int i = 0; i < 4; i++) {

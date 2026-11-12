@@ -33,7 +33,7 @@ static const struct { int col; const char *group, *name, *help; } T[] = {
     {2, "CHECK", "speed test", "how fast a disk reads. reads only"},
     {2, "CHECK", "surface scan", "maps slow and broken areas. reads only"},
     {2, "WIPE", "wipe a disk", "erase it for good, before it goes to someone else"},
-    {2, "LIFEBOAT", "update lifeboat", "from a newer iso, a link, or the latest gitlab release. used next boot"},
+    {2, "LIFEBOAT", "update lifeboat", "from a newer iso or patch, a link, or the latest gitlab release. used next boot"},
     {2, "LIFEBOAT", "find drivers", "loads a driver for every device and leaves a report on the stick"},
 };
 #define NT ((int)(sizeof T / sizeof *T))
@@ -201,7 +201,7 @@ static void finish(const char *cmd)
 static void go_step(void)
 {
     static const char *const imgs[] = {".img", ".pcl.zst", NULL};
-    static const char *const isos[] = {".iso", NULL};
+    static const char *const isos[] = {".iso", ".patch", NULL};
     char cmd[900];
 
     nrows = sel_row = scroll_row = 0;
@@ -339,7 +339,7 @@ static void go_step(void)
         break;
     case T_UPDATE:
         if (step == 0) {
-            snprintf(ask, sizeof ask, "a lifeboat iso on a disk, type a link, or the newest build");
+            snprintf(ask, sizeof ask, "a lifeboat iso or patch, type a link, or the newest build");
             add_row("latest from gitlab", "downloads the newest build, no file needed", "gitlab", 1);
             list_files(isos);
             typing = 1;

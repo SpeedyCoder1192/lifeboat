@@ -168,7 +168,9 @@ bytes=$(( $(stat -c %s "$out/vmlinuz") + $(stat -c %s "$out/initramfs.img") + \
           $(stat -c %s "$root/usr/lib/systemd/boot/efi/systemd-bootx64.efi") ))
 echo "==> copying $(human "$bytes") to $esp"
 cp "$out/vmlinuz" "$out/initramfs.img" "$out/system.sfs" "$out/hw.sfs" "$mnt/lifeboat/"
-cp "$root/etc/lifeboat-version" "$mnt/lifeboat/version"
+verfile=$out/version
+[ -f "$verfile" ] || verfile=$root/etc/lifeboat-version
+cp "$verfile" "$mnt/lifeboat/version"
 cat > "$mnt/loader/loader.conf" <<END
 default lifeboat.conf
 timeout 2

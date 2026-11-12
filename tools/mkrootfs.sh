@@ -59,7 +59,9 @@ if [ -x /usr/bin/yay ]; then
 else
     echo "==> WARNING: no yay on this machine, the image gets no aur support"
 fi
-date +%Y.%m.%d-%H%M > "$root/etc/lifeboat-version"
+ver=$(date +%Y.%m.%d-%H%M)
+printf '%s\n' "$ver" > "$root/etc/lifeboat-version"
+printf '%s\n' "$ver" > "$out/version"
 chown -R 0:0 "$root/etc" "$root/usr/local"
 # same clock as the machine it was built on
 ln -sf "$(readlink -f /etc/localtime)" "$root/etc/localtime"

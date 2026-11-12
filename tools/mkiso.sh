@@ -18,6 +18,10 @@ out=$top/out
 root=$top/work/rootfs
 work=$top/work/iso
 extra=${1:-}
+# the version comes from out/ when it is there, so an iso can be built without
+# a full work/rootfs (see the incremental path in OPENCODE.md)
+outver=$out/version
+[ -f "$outver" ] || outver=$root/etc/lifeboat-version
 
 for f in vmlinuz initramfs.img system.sfs hw.sfs; do
     [ -f "$out/$f" ] || { echo "out/$f is missing (./build.sh all)" >&2; exit 1; }
@@ -51,7 +55,7 @@ END
 cp "$root/usr/lib/systemd/boot/efi/systemd-bootx64.efi" "$work/tree/EFI/BOOT/BOOTX64.EFI"
 cp -r "$work/loader" "$work/tree/loader"
 cp "$out/vmlinuz" "$out/initramfs.img" "$work/tree/lifeboat/"
-cp "$root/etc/lifeboat-version" "$work/tree/lifeboat/version"
+cp "$outver" "$work/tree/lifeboat/version"
 cat > "$work/tree/README.txt" <<END
 lifeboat
 

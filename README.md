@@ -88,10 +88,12 @@ pulled while the session was on it).
 
 Anything that overwrites a disk makes you type its name first.
 
-**Update lifeboat** takes a newer ISO you already have, a link you type, or
-`latest from gitlab`, which downloads the newest release straight from GitLab.
-The new files are used on the next boot; saved sessions and added packages
-carry over.
+**Update lifeboat** takes a newer ISO or patch you already have, a link you
+type, or `latest from gitlab`, which downloads the newest release straight from
+GitLab. When the stick is on the normal save layout, the GitLab update first
+asks for a patch named after its own version and downloads only the difference;
+if no patch is published it falls back to the whole ISO. The new files are used
+on the next boot; saved sessions and added packages carry over.
 
 **Find drivers** loads a driver for every device, restarts sound if a card
 showed up late, offers to restart the desktop if the graphics driver did, and
@@ -124,6 +126,7 @@ doas lifeboat bench /dev/sdb
 doas lifeboat surface /dev/sdb
 doas lifeboat wipe /dev/sdb quick|secure|zeros
 doas lifeboat update lifeboat.iso
+doas lifeboat update lifeboat.patch
 doas lifeboat update gitlab
 doas lifeboat persist /dev/sdX
 ```
@@ -177,6 +180,9 @@ a stick.
 ./build.sh all             the three above
 ./build.sh iso             out/lifeboat.iso
 ./build.sh usb /dev/sdX    write a stick with a save partition
+./build.sh patch old.iso   out/patches/lifeboat-<old version>.patch
+./build.sh update /dev/sdX [patch]
+                           apply a patch to a stick, keeping its saves
 ./build.sh qemu            boot in qemu with a fake stick
 ./build.sh qemu iso        boot the iso
 ./build.sh kernel          optional, build our own kernel instead of the host's
@@ -184,6 +190,15 @@ a stick.
 
 The image uses the newest Arch kernel installed on the build machine, and
 copies its `yay`.
+
+`./build.sh patch old.iso` compares the files in `out/` with the ones in an
+older ISO and writes a small bundle, `out/patches/lifeboat-<oldver>.patch`. Each
+big file inside it is a `zstd --patch-from` delta against the old file, so a
+stick downloads and writes only what changed instead of the whole ISO.
+`./build.sh update` applies one to a stick or image without repartitioning or
+touching the save partition, and checks every file's sha256 before swapping it
+in. Publish the bundle next to the ISO as a GitLab release asset named
+`lifeboat-<oldver>.patch` for `lifeboat update gitlab` to find it.
 
 `LIFEBOAT_DEMO=ram boat/lifeboat` shows the home screen without booting
 anything (also `stick`, `move`, `full`).
