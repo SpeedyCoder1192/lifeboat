@@ -339,7 +339,8 @@ static void go_step(void)
         break;
     case T_UPDATE:
         if (step == 0) {
-            snprintf(ask, sizeof ask, "a lifeboat iso on a disk, or type a link");
+            snprintf(ask, sizeof ask, "a lifeboat iso on a disk, type a link, or the newest build");
+            add_row("latest from gitlab", "downloads the newest build, no file needed", "gitlab", 1);
             list_files(isos);
             typing = 1;
             snprintf(note, sizeof note, "typing a link (https://...) and enter downloads it");

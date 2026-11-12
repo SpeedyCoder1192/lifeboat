@@ -84,9 +84,14 @@ pulled while the session was on it).
 | repair | reinstall a Linux boot loader or the Windows boot entry, fsck, reset a password, chroot |
 | check | virus scan (ClamAV, downloaded when needed), speed test, surface scan |
 | wipe | quick (signatures and discard), the drive's own secure erase, or zeros |
-| lifeboat | update the stick from a newer iso or a link, find drivers |
+| lifeboat | update the stick from a newer iso, a link, or the latest GitLab release, find drivers |
 
 Anything that overwrites a disk makes you type its name first.
+
+**Update lifeboat** takes a newer ISO you already have, a link you type, or
+`latest from gitlab`, which downloads the newest release straight from GitLab.
+The new files are used on the next boot; saved sessions and added packages
+carry over.
 
 **Find drivers** loads a driver for every device, restarts sound if a card
 showed up late, offers to restart the desktop if the graphics driver did, and
@@ -119,6 +124,7 @@ doas lifeboat bench /dev/sdb
 doas lifeboat surface /dev/sdb
 doas lifeboat wipe /dev/sdb quick|secure|zeros
 doas lifeboat update lifeboat.iso
+doas lifeboat update gitlab
 doas lifeboat persist /dev/sdX
 ```
 

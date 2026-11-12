@@ -497,11 +497,15 @@ int cmd_wipe(const char *dev, const char *how)
 
 /* --- updating lifeboat ------------------------------------------------------------------ */
 
+/* where "update gitlab" gets the newest build from. GitLab's permalink always
+   points at the latest release, so the url itself never goes stale. */
+#define UPDATE_GITLAB "https://gitlab.com/aahiluzzama27/lifeboat/-/releases/permalink/latest/downloads/lifeboat.iso"
+
 /* lifeboat update FILE-OR-LINK: the files out of a newer lifeboat iso, onto the stick */
 int cmd_update(const char *src)
 {
     char bootdev[128] = "", fs[32], dir[] = RUN_DIR "/update", iso[300], target[200], ver_new[64] = "",
-         ver_old[64] = "", path[400], save[128];
+         ver_old[64] = "", path[400], save[128], srcurl[400];
     static const char *files[] = {"vmlinuz", "initramfs.img", "system.sfs", "hw.sfs"};
     FILE *f;
     struct stat a, b;
@@ -509,6 +513,10 @@ int cmd_update(const char *src)
 
     if (root_only())
         return 1;
+    if (!strcmp(src, "gitlab")) {
+        snprintf(srcurl, sizeof srcurl, "%s", UPDATE_GITLAB);
+        src = srcurl;
+    }
     if ((f = fopen(RUN_DIR "/bootdev", "r"))) {
         if (fscanf(f, "%127s", bootdev) != 1)
             bootdev[0] = 0;
