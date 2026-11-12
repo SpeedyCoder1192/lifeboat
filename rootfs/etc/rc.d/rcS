@@ -31,6 +31,9 @@ udevadm trigger --action=add --type=devices
 udevadm settle --timeout=15
 modprobe -a fuse loop 2>/dev/null
 systemd-tmpfiles --create --boot --exclude-prefix=/dev 2>/dev/null
+# a session that ended in the middle of a package transaction leaves the
+# database locked. nothing can be holding it this early.
+rm -f /var/lib/pacman/db.lck
 rm -f /run/nologin
 
 [ -e /run/lifeboat/splash ] && echo "text=starting up" > /run/lifeboat/splash

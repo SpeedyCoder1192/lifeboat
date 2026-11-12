@@ -153,6 +153,7 @@ int main(int argc, char **argv)
     if (!strcmp(cmd, "chroot") && a[0]) return cmd_chroot(a, b);
     if (!strcmp(cmd, "fsck") && a[0]) return cmd_fsck(a);
     if (!strcmp(cmd, "persist") && a[0]) return cmd_persist(a);
+    if (!strcmp(cmd, "pkgunlock")) return cmd_pkgunlock();
     if (!strcmp(cmd, "timezone") && a[0]) return cmd_timezone(a);
     if (!strcmp(cmd, "clone") && a[0] && b[0]) return cmd_clone(a, b, argc > 4 ? argv[4] : "used");
     if (!strcmp(cmd, "image") && a[0] && b[0]) return cmd_image(a, b);

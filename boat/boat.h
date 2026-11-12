@@ -75,6 +75,7 @@ int cmd_unlock(const char *dev);
 int cmd_chroot(const char *dev, const char *mode);
 int cmd_fsck(const char *dev);
 int cmd_persist(const char *disk);
+int cmd_pkgunlock(void);
 int cmd_timezone(const char *zone);
 int cmd_clone(const char *src, const char *dst, const char *how);
 int cmd_image(const char *src, const char *file);

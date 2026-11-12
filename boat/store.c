@@ -6,6 +6,7 @@
  * so nothing gets unmounted and nothing notices.
  */
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sched.h>
@@ -1508,6 +1509,50 @@ static int save_file_here(const char *disk, long long *rc)
 out:
     if (made_mount)
         run(NULL, 0, "umount", BOOT);
+    return 0;
+}
+
+/* A session that ends in the middle of a pacman transaction leaves
+ * /var/lib/pacman/db.lck behind, and every later job says the database is
+ * locked. Nothing holds the file at that point, but only root can clear it.
+ * Check /proc first: if a pacman really is running, leave the lock alone. */
+int cmd_pkgunlock(void)
+{
+    DIR *d;
+    struct dirent *e;
+    int held = 0;
+
+    if (need_root())
+        return 1;
+    if (access("/var/lib/pacman/db.lck", F_OK))
+        return 0;
+    d = opendir("/proc");
+    if (d) {
+        while ((e = readdir(d)) && !held) {
+            char path[64], comm[32];
+            FILE *f;
+            if (e->d_name[0] < '0' || e->d_name[0] > '9')
+                continue;
+            snprintf(path, sizeof path, "/proc/%s/comm", e->d_name);
+            f = fopen(path, "r");
+            if (!f)
+                continue;
+            if (fgets(comm, sizeof comm, f) &&
+                (!strncmp(comm, "pacman", 6) || !strncmp(comm, "yay", 3)))
+                held = 1;
+            fclose(f);
+        }
+        closedir(d);
+    }
+    if (held) {
+        fprintf(stderr, "a package job is still running\n");
+        return 1;
+    }
+    if (unlink("/var/lib/pacman/db.lck")) {
+        fprintf(stderr, "could not clear /var/lib/pacman/db.lck\n");
+        return 1;
+    }
+    printf("cleared a stale package lock\n");
     return 0;
 }
 

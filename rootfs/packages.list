@@ -58,6 +58,9 @@ strace
 net-tools
 imv
 mousepad
+# mousepad's spell check and shortcuts plugins
+gspell
+libxfce4ui
 unrar
 libnotify
 

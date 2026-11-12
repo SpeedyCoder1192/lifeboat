@@ -256,6 +256,12 @@ static void start(const char *title, const char *cmd)
         toast(MUTED, "wait for this one to finish");
         return;
     }
+    /* a session that died mid-transaction leaves pacman's lock behind */
+    if (!demo() && !access("/var/lib/pacman/db.lck", F_OK)) {
+        char out[64];
+        if (!run(out, sizeof out, "doas", SELF, "pkgunlock", NULL) && out[0])
+            toast(MUTED, "%s", clip(out, 60));
+    }
     if (demo())
         cmd = "for n in glibc mesa firefox; do echo \"installing $n...\"; sleep 0.7; done";
     if (pipe(p))
