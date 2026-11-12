@@ -33,7 +33,7 @@ static const struct { int col; const char *group, *name, *help; } T[] = {
     {2, "CHECK", "speed test", "how fast a disk reads. reads only"},
     {2, "CHECK", "surface scan", "maps slow and broken areas. reads only"},
     {2, "WIPE", "wipe a disk", "erase it for good, before it goes to someone else"},
-    {2, "LIFEBOAT", "update lifeboat", "from a newer iso, file or link. used next boot"},
+    {2, "LIFEBOAT", "update lifeboat", "from a newer iso, a link, or the latest gitlab release. used next boot"},
     {2, "LIFEBOAT", "find drivers", "loads a driver for every device and leaves a report on the stick"},
 };
 #define NT ((int)(sizeof T / sizeof *T))
