@@ -43,7 +43,7 @@ stick, press `d`, then `9` (or run `doas lifeboat persist /dev/sdX`). That adds
 a save partition in the free space of a flashed stick, or a `save.img` on a
 FAT32 stick.
 
-You can also use `build.sh` in this repo after cloning it (see [Building](#Building)):
+You can also use `build.sh` in this repo after cloning it (see [Building](https://gitlab.com/speedycoder1192/lifeboat/#building)):
 
 ```bash
 git clone https://gitlab.com/speedycoder1192/lifeboat.git
