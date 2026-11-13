@@ -36,7 +36,9 @@ Get `lifeboat.iso`, then either:
 - Copy the files onto any FAT32 stick.
 - **Ventoy is currently NOT supported.**
 
-BIOS boot is not supported.
+It boots on UEFI (Secure Boot off) and on legacy BIOS. Legacy BIOS works from
+the ISO in a VM or on a disc, and from a stick written with `./build.sh usb`.
+A plain file copy onto a FAT32 stick is UEFI-only.
 
 The iso on its own keeps nothing. To keep sessions, open DISKS, pick the
 stick, press `d`, then `9` (or run `doas lifeboat persist /dev/sdX`). That adds
@@ -173,9 +175,9 @@ watcher. The session is labwc with foot.
 ## Building
 
 On Arch, with `base-devel`, `arch-install-scripts`, `squashfs-tools`, `cpio`,
-`gptfdisk`, `dosfstools`, `mtools`, `libisoburn`, and `qemu-desktop` for
-testing. Root is asked for through `pkexec`, only for pacstrap and for writing
-a stick.
+`gptfdisk`, `dosfstools`, `mtools`, `libisoburn`, `syslinux` (legacy BIOS boot
+loader), and `qemu-desktop` for testing. Root is asked for through `pkexec`,
+only for pacstrap and for writing a stick.
 
 ```
 ./build.sh tool            compile boat/ into out/lifeboat

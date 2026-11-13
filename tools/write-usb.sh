@@ -101,6 +101,7 @@ extra=${4:-}
 loop=
 out=$top/out
 root=$top/work/rootfs
+sys=/usr/lib/syslinux/bios
 mnt=$(mktemp -d)
 trap 'mon_stop; umount "$mnt" 2>/dev/null || true; rmdir "$mnt" || true; [ -z "$loop" ] || losetup -d "$loop"' EXIT
 
@@ -122,6 +123,9 @@ if lsblk -no MOUNTPOINT "$dev" | grep -q .; then
 fi
 for f in vmlinuz initramfs.img system.sfs hw.sfs; do
     [ -f "$out/$f" ] || { echo "out/$f is missing (./build.sh image)" >&2; exit 1; }
+done
+for f in ldlinux.c32 menu.c32 libutil.c32 gptmbr.bin; do
+    [ -f "$sys/$f" ] || { echo "$sys/$f is missing (pacman -S syslinux)" >&2; exit 1; }
 done
 
 need=$(( ($(stat -c %s "$out/system.sfs") + $(stat -c %s "$out/hw.sfs") + $(stat -c %s "$out/initramfs.img") + $(stat -c %s "$out/vmlinuz")) / 1048576 * 2 + 400 ))
@@ -160,7 +164,7 @@ else
 fi
 
 mount "$esp" "$mnt"
-mkdir -p "$mnt/EFI/BOOT" "$mnt/loader/entries" "$mnt/lifeboat"
+mkdir -p "$mnt/EFI/BOOT" "$mnt/loader/entries" "$mnt/lifeboat" "$mnt/boot/syslinux"
 cp "$root/usr/lib/systemd/boot/efi/systemd-bootx64.efi" "$mnt/EFI/BOOT/BOOTX64.EFI"
 rm -f "$mnt/lifeboat/system.img"
 bytes=$(( $(stat -c %s "$out/vmlinuz") + $(stat -c %s "$out/initramfs.img") + \
@@ -188,9 +192,40 @@ linux   /lifeboat/vmlinuz
 initrd  /lifeboat/initramfs.img
 options quiet loglevel=3 lifeboat.fresh $extra
 END
+
+# legacy bios: syslinux lives in the fat partition, with gptmbr in the mbr
+# pointing at it, so the same stick boots both kinds of firmware
+cp "$sys/ldlinux.c32" "$sys/menu.c32" "$sys/libutil.c32" "$mnt/boot/syslinux/"
+cat > "$mnt/boot/syslinux/syslinux.cfg" <<END
+UI menu.c32
+PROMPT 0
+TIMEOUT 20
+DEFAULT lifeboat
+MENU TITLE lifeboat
+
+LABEL lifeboat
+    MENU LABEL lifeboat
+    LINUX /lifeboat/vmlinuz
+    INITRD /lifeboat/initramfs.img
+    APPEND quiet loglevel=3 $extra
+
+LABEL fresh
+    MENU LABEL lifeboat, ignoring what is saved on the stick
+    LINUX /lifeboat/vmlinuz
+    INITRD /lifeboat/initramfs.img
+    APPEND quiet loglevel=3 lifeboat.fresh $extra
+END
+
 echo "==> flushing to the stick, this is where the time goes"
 mon_start flush "${dev##*/}" "$bytes"
 umount "$mnt"
 mon_stop
+sync
+
+echo "==> installing the legacy bios boot loader on $dev"
+syslinux --install --directory /boot/syslinux "$esp"
+dd if="$sys/gptmbr.bin" of="$dev" bs=440 count=1 conv=notrunc status=none
+# the attribute gptmbr looks for when it picks the partition to start
+sgdisk -A 1:set:2 "$dev" >/dev/null
 sync
 echo "==> $dev is ready"

@@ -1,5 +1,7 @@
 #!/bin/bash
-# out/lifeboat.iso: boots through uefi from a flashed stick, a vm or a disc.
+# out/lifeboat.iso: boots through uefi from a vm, a disc or a flashed stick,
+# and through a legacy bios from a vm or a disc. (a stick written by
+# tools/write-usb.sh gets syslinux, so it boots both ways.)
 #   mkiso.sh [extra kernel options]
 #
 # The iso9660 part (label LBBOOT) carries everything: the boot loader, kernel,
@@ -7,7 +9,8 @@
 # (rufus in "iso image" mode, or a plain copy onto a fat32 stick) end up with a
 # stick that boots and is still a normal stick. For the image itself, uefi
 # boots from a small fat partition appended to it with the boot loader, kernel
-# and initramfs again, because firmware can't read iso9660. No root needed.
+# and initramfs again, because firmware can't read iso9660. Legacy bios boots
+# from an el torito image in the iso9660 part itself. No root needed.
 #
 # An iso can't hold changes. "lifeboat persist" (9 in the rescue tools) adds a
 # LIFEBOAT partition in the free space after it on the stick.
@@ -18,6 +21,7 @@ out=$top/out
 root=$top/work/rootfs
 work=$top/work/iso
 extra=${1:-}
+sys=/usr/lib/syslinux/bios
 # the version comes from out/ when it is there, so an iso can be built without
 # a full work/rootfs (see the incremental path in OPENCODE.md)
 outver=$out/version
@@ -26,9 +30,13 @@ outver=$out/version
 for f in vmlinuz initramfs.img system.sfs hw.sfs; do
     [ -f "$out/$f" ] || { echo "out/$f is missing (./build.sh all)" >&2; exit 1; }
 done
+for f in isolinux.bin ldlinux.c32 menu.c32 libutil.c32; do
+    [ -f "$sys/$f" ] || { echo "$sys/$f is missing (pacman -S syslinux)" >&2; exit 1; }
+done
 
 rm -rf "$work"
-mkdir -p "$work/tree/lifeboat" "$work/loader/entries" "$work/tree/EFI/BOOT"
+mkdir -p "$work/tree/lifeboat" "$work/loader/entries" "$work/tree/EFI/BOOT" \
+    "$work/tree/boot/syslinux"
 for f in system.sfs hw.sfs; do
     ln "$out/$f" "$work/tree/lifeboat/$f" 2>/dev/null || cp "$out/$f" "$work/tree/lifeboat/$f"
 done
@@ -56,11 +64,38 @@ cp "$root/usr/lib/systemd/boot/efi/systemd-bootx64.efi" "$work/tree/EFI/BOOT/BOO
 cp -r "$work/loader" "$work/tree/loader"
 cp "$out/vmlinuz" "$out/initramfs.img" "$work/tree/lifeboat/"
 cp "$outver" "$work/tree/lifeboat/version"
+
+# legacy bios: syslinux in an el torito image, reading the same files out of
+# the iso9660 tree. this is what boots on machines without uefi.
+cp "$sys/isolinux.bin" "$work/tree/boot/syslinux/"
+cp "$sys/ldlinux.c32" "$sys/menu.c32" "$sys/libutil.c32" "$work/tree/boot/syslinux/"
+cat > "$work/tree/boot/syslinux/isolinux.cfg" <<END
+UI menu.c32
+PROMPT 0
+TIMEOUT 20
+DEFAULT lifeboat
+MENU TITLE lifeboat
+
+LABEL lifeboat
+    MENU LABEL lifeboat
+    LINUX /lifeboat/vmlinuz
+    INITRD /lifeboat/initramfs.img
+    APPEND quiet loglevel=3 $extra
+
+LABEL fresh
+    MENU LABEL lifeboat, ignoring what is saved on the stick
+    LINUX /lifeboat/vmlinuz
+    INITRD /lifeboat/initramfs.img
+    APPEND quiet loglevel=3 lifeboat.fresh $extra
+END
+
 cat > "$work/tree/README.txt" <<END
 lifeboat
 
-This stick boots lifeboat on UEFI machines (Secure Boot off). It is still a
-normal stick: anything else you put on it stays.
+This stick boots lifeboat on UEFI machines (Secure Boot off) and on legacy BIOS
+machines. A plain file copy boots on UEFI only; use the iso or a stick written
+by "build.sh usb" to boot on a BIOS machine. It is still a normal stick:
+anything else you put on it stays.
 
 Logins: user "lifeboat", password "user" (has sudo). root's password is
 "root1234".
@@ -82,7 +117,10 @@ mcopy -i "$esp" "$work/loader/entries/lifeboat.conf" "$work/loader/entries/lifeb
 
 xorriso -as mkisofs -quiet -o "$out/lifeboat.iso" -V LBBOOT -R -J -iso-level 3 \
     -partition_offset 16 \
+    -b boot/syslinux/isolinux.bin -c boot/syslinux/boot.cat \
+    -no-emul-boot -boot-load-size 4 \
     -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B "$esp" -appended_part_as_gpt \
+    -eltorito-alt-boot \
     -e --interval:appended_partition_2:all:: -no-emul-boot \
     "$work/tree"
 rm -rf "$work"
