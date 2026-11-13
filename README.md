@@ -8,41 +8,47 @@ the machine is fixed.
   after boot.
 - Your changes stay in compressed RAM. When RAM gets tight they move onto the
   stick while everything keeps running.
-- At power off you pick: save the session to the stick, or drop it.
+- At power off you can pick between saving the session to the stick or dropping the changes.
 - Saves can be encrypted with a passphrase you type at boot.
-- The desktop is one terminal program written in C. GUI apps, Flatpaks and
+- The desktop is one terminal program written in C. GUI apps, Flatpaks, normal Arch Linux packages and
   AppImages still run on top of it.
 
 ![home screen](docs/home.png)
 
 ## Logins
 
-| user | password | |
-|---|---|---|
-| `lifeboat` | `user` | the desktop user, in `wheel` |
-| `root` | `root1234` | |
+| user | password |
+|---|---|
+| `lifeboat` | `user` |
+| `root` | `root1234` |
 
 The home screen's own root jobs (mounting, disk tools, packages, saving) go
-through `doas` rules that don't ask for a password. `sudo` and `doas` typed
-in a terminal ask for `user`.
+through `doas` rules that don't ask for a password.
 
-Change both if the stick leaves your hands: `passwd` and `doas passwd`.
+Change `passwd` and `doas passwd` if you lose the stick.
 
 ## Getting it onto a stick
 
 Get `lifeboat.iso`, then either:
 
-- **Flash it** with `dd`, Etcher or Rufus (DD mode). Format the stick later to
-  use it as a normal stick again.
-- **Copy it** with Rufus in ISO mode, or copy the files onto any FAT32 stick.
-  The stick stays a normal stick with a `lifeboat` folder on it.
+- Flash it with **Rufus (ISO or DD mode)**.
+- Flash it with `dd`.
+- Copy the files onto any FAT32 stick.
+- **Ventoy is currently NOT supported.**
 
-Boot it through UEFI with Secure Boot off. BIOS boot is not supported.
+BIOS boot is not supported.
 
 The iso on its own keeps nothing. To keep sessions, open DISKS, pick the
 stick, press `d`, then `9` (or run `doas lifeboat persist /dev/sdX`). That adds
 a save partition in the free space of a flashed stick, or a `save.img` on a
-FAT32 stick. Nothing is deleted.
+FAT32 stick.
+
+You can also use `build.sh` in this repo after cloning it (see [Building](#Building)):
+
+```bash
+git clone https://gitlab.com/speedycoder1192/lifeboat.git
+cd lifeboat/
+```
 
 ## Using it
 
@@ -53,13 +59,10 @@ super+q        close a window
 alt+tab        switch windows
 ```
 
-The home screen has three columns, APPS, WIFI and DISKS. Arrows move, `enter`
-opens, `/` filters.
-
 | key | |
 |---|---|
 | `s` | move the changes to the stick, or back into RAM |
-| `c` | cancel a move halfway, nothing is lost |
+| `c` | cancel a move halfway |
 | `p` | packages from the repos and the AUR |
 | `e` | extras, a checklist of common apps |
 | `f` | disk tools |
@@ -70,9 +73,12 @@ opens, `/` filters.
 | `-` `=`, `[` `]`, `m` | volume, brightness, mute |
 | `o` | power off |
 
-The big word in the corner says where the session lives: `RAM`, `STICK`,
-`MOVE`, `FULL` (RAM is tight and there's no stick) or `LOST` (the stick was
-pulled while the session was on it).
+The big word in the corner shows the status:
+- `RAM` means the session's living in your RAM
+- `STICK` means the session's living in your stick
+- `MOVE` means the session's moving to stick/RAM
+- `FULL` means RAM is tight and there's no stick
+- `LOST` means the stick was removed while the session was on it
 
 ![disk tools](docs/fix.png)
 
@@ -84,9 +90,7 @@ pulled while the session was on it).
 | repair | reinstall a Linux boot loader or the Windows boot entry, fsck, reset a password, chroot |
 | check | virus scan (ClamAV, downloaded when needed), speed test, surface scan |
 | wipe | quick (signatures and discard), the drive's own secure erase, or zeros |
-| lifeboat | update the stick from a newer iso, a link, or the latest GitLab release, find drivers |
-
-Anything that overwrites a disk makes you type its name first.
+| lifeboat | update the stick from a newer iso/patch, a link, or the latest GitLab release, find drivers |
 
 **Update lifeboat** takes a newer ISO or patch you already have, a link you
 type, or `latest from gitlab`, which downloads the newest release straight from
@@ -230,9 +234,8 @@ kernel/             config for ./build.sh kernel
 
 ## Known limits
 
-- Mostly tested in QEMU. Real hardware has seen little use so far.
+- Mostly tested in QEMU or one laptop.
 - Secure Boot must be off.
 - Pulling the stick while the session lives on it loses the session.
 - Installing a package on an image that is weeks old is a partial upgrade.
-  If something breaks, update everything (`u` on the package page).
 - AUR packages that compile need `base-devel` installed first.
